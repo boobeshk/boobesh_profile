@@ -1,0 +1,42 @@
+# Routes: /orders and /payments behind one gateway, each with its own plugin set.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orders
+  namespace: api
+  annotations:
+    konghq.com/strip-path: "true"
+    konghq.com/plugins: key-auth,rate-limit-standard,request-size-limit
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /orders
+            pathType: Prefix
+            backend:
+              service:
+                name: orders
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: payments
+  namespace: api
+  annotations:
+    konghq.com/strip-path: "true"
+    konghq.com/plugins: key-auth,rate-limit-strict,request-size-limit
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payments
+                port:
+                  number: 80

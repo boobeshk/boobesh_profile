@@ -1,0 +1,109 @@
+# Secure delivery pipeline. To use it, copy this file to .github/workflows/ in an app repository
+# and set AWS_ROLE_ARN and ECR_REPOSITORY as repository variables.
+#
+#   secrets scan -> IaC/K8s scan -> build -> image CVE scan -> push to ECR -> sign (keyless) -> update GitOps manifest
+name: secure-delivery
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: write   # commit the new image digest back to the manifests
+  id-token: write   # OIDC to AWS and keyless signing with Sigstore
+  security-events: write
+
+env:
+  AWS_REGION: ap-south-1
+  IMAGE_NAME: secure-app
+
+jobs:
+  scan-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: IaC and Kubernetes scan (Checkov)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: kubernetes,dockerfile
+          soft_fail: false
+
+  build-scan-push:
+    needs: scan-source
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t $IMAGE_NAME:${{ github.sha }} app/
+
+      - name: Image vulnerability scan (Trivy), fail on fixable HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Stop here for pull requests
+        if: github.event_name == 'pull_request'
+        run: echo "Scans passed; images are only pushed from main."
+
+      - name: AWS credentials (OIDC, no stored keys)
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        if: github.event_name == 'push'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image
+        if: github.event_name == 'push'
+        id: push
+        run: |
+          IMAGE=${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}
+          docker tag $IMAGE_NAME:${{ github.sha }} $IMAGE:${{ github.sha }}
+          docker push $IMAGE:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' $IMAGE:${{ github.sha }})
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless, identity = this workflow)
+        if: github.event_name == 'push'
+        run: cosign sign --yes ${{ steps.push.outputs.digest }}
+
+  update-manifest:
+    needs: build-scan-push
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Argo CD watches k8s/; deploying is just committing the new digest.
+      - name: Pin the new image digest
+        run: |
+          cd k8s
+          kustomize edit set image secure-app=${{ needs.build-scan-push.outputs.digest }}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "deploy: secure-app ${{ github.sha }}"
+          git push

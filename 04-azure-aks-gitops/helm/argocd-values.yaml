@@ -1,0 +1,40 @@
+# Values for the argo/argo-cd Helm chart.
+global:
+  nodeSelector:
+    workload: apps
+
+configs:
+  params:
+    # TLS is terminated by the ingress / port-forward in this lab.
+    server.insecure: true
+  cm:
+    # Show resource health for Argo CD Applications in the app-of-apps view.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+server:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+repoServer:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi

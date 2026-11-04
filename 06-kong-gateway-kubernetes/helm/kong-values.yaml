@@ -1,0 +1,37 @@
+# Values for the kong/ingress Helm chart (Kong Gateway + Kong Ingress Controller, DB-less).
+controller:
+  ingressController:
+    ingressClass: kong
+
+gateway:
+  replicaCount: 2
+  env:
+    # JSON access logs to stdout, collected by the cluster's log pipeline.
+    proxy_access_log: /dev/stdout
+    proxy_error_log: /dev/stderr
+  proxy:
+    type: LoadBalancer
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 70
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  serviceMonitor:
+    # Requires the Prometheus Operator (see lab 08).
+    enabled: true

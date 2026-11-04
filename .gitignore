@@ -1,0 +1,21 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Build output
+**/build/
+__pycache__/
+*.pyc
+
+# Local secrets
+.env
+*.pem
+kubeconfig*
+
+.DS_Store

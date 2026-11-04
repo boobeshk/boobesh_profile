@@ -1,0 +1,116 @@
+# Kong in front of the model: who may call it, how often, and with how big a prompt.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: llm-key-auth
+  namespace: llm
+plugin: key-auth
+config:
+  key_names: ["apikey"]
+  hide_credentials: true
+---
+# Inference is expensive: 20 requests a minute per consumer.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: llm-rate-limit
+  namespace: llm
+plugin: rate-limiting
+config:
+  minute: 20
+  policy: local
+  limit_by: consumer
+---
+# Cap prompt size at 64 KB to bound compute per request.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: llm-request-size
+  namespace: llm
+plugin: request-size-limiting
+config:
+  allowed_payload_size: 64
+  size_unit: kilobytes
+---
+# Only the generation and chat endpoints are exposed; model management (pull, delete) is not.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: llm-block-other-paths
+  namespace: llm
+plugin: request-termination
+config:
+  status_code: 403
+  message: "Only /api/generate and /api/chat are available."
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: assistant-ui-key
+  namespace: llm
+  labels:
+    konghq.com/credential: key-auth
+type: Opaque
+stringData:
+  key: demo-assistant-key-change-me
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: assistant-ui
+  namespace: llm
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: assistant-ui
+credentials:
+  - assistant-ui-key
+---
+# Allowed inference endpoints.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-inference
+  namespace: llm
+  annotations:
+    konghq.com/plugins: llm-key-auth,llm-rate-limit,llm-request-size
+    konghq.com/read-timeout: "120000"
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /api/generate
+            pathType: Exact
+            backend:
+              service:
+                name: ollama
+                port:
+                  number: 11434
+          - path: /api/chat
+            pathType: Exact
+            backend:
+              service:
+                name: ollama
+                port:
+                  number: 11434
+---
+# Everything else under /api (pull, delete, ...) is blocked at the gateway.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-blocked
+  namespace: llm
+  annotations:
+    konghq.com/plugins: llm-block-other-paths
+spec:
+  ingressClassName: kong
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: ollama
+                port:
+                  number: 11434

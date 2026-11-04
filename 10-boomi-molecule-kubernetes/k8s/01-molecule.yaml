@@ -1,0 +1,174 @@
+# Boomi Molecule (clustered runtime) on Kubernetes, modelled on Boomi's Kubernetes reference architecture.
+# Check the image tag, environment variables and probe paths against the current Boomi documentation before use.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boomi
+---
+# Create from the Boomi platform (Manage -> Runtime Management -> Installer token). Never commit the real value.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: boomi-install-token
+  namespace: boomi
+type: Opaque
+stringData:
+  token: replace-with-installer-token
+---
+# All Molecule nodes share one installation directory, so the volume must be ReadWriteMany (NFS, EFS, Azure Files).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: molecule-storage
+  namespace: boomi
+spec:
+  accessModes: ["ReadWriteMany"]
+  storageClassName: shared-nfs
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: molecule
+  namespace: boomi
+  labels:
+    app: molecule
+spec:
+  clusterIP: None
+  selector:
+    app: molecule
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: molecule
+  namespace: boomi
+  labels:
+    app: molecule
+spec:
+  serviceName: molecule
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: molecule
+  template:
+    metadata:
+      labels:
+        app: molecule
+    spec:
+      # Lets running integration processes finish before a node shuts down.
+      terminationGracePeriodSeconds: 900
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsNonRoot: true
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: molecule
+      containers:
+        - name: molecule
+          image: boomi/molecule:release
+          ports:
+            - name: http
+              containerPort: 9090
+          env:
+            - name: BOOMI_ATOMNAME
+              value: k8s-molecule
+            - name: ATOM_LOCALHOSTID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: INSTALL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: boomi-install-token
+                  key: token
+            - name: BOOMI_ENVIRONMENTID
+              value: replace-with-environment-id
+            - name: ATOM_VMOPTIONS_OVERRIDES
+              value: "-Xmx3g"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 3Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /_admin/readiness
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /_admin/readiness
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_admin/liveness
+              port: http
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: molecule-storage
+              mountPath: /mnt/boomi
+      volumes:
+        - name: molecule-storage
+          persistentVolumeClaim:
+            claimName: molecule-storage
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: molecule
+  namespace: boomi
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: molecule
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 900
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 600
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: molecule
+  namespace: boomi
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: molecule

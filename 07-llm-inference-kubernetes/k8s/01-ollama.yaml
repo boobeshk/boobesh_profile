@@ -1,0 +1,145 @@
+# Self-hosted LLM inference with Ollama. Each replica pulls the model at start-up,
+# so replicas are independent and the HPA can add or remove them freely.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: llm
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.5.7
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              ollama serve &
+              until ollama list >/dev/null 2>&1; do sleep 1; done
+              ollama pull "$MODEL"
+              wait
+          env:
+            - name: MODEL
+              value: llama3.2:1b
+            - name: OLLAMA_HOST
+              value: 0.0.0.0:11434
+            - name: OLLAMA_KEEP_ALIVE
+              value: 24h
+          ports:
+            - name: http
+              containerPort: 11434
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              memory: 6Gi
+          # Up to 10 minutes to download the model before Kubernetes gives up.
+          startupProbe:
+            exec:
+              command: ["/bin/sh", "-c", "ollama list | grep -q \"$MODEL\""]
+            periodSeconds: 10
+            failureThreshold: 60
+          # Ready only when the model is loaded, so no request hits an empty replica.
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "ollama list | grep -q \"$MODEL\""]
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+      volumes:
+        - name: models
+          emptyDir:
+            sizeLimit: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: llm
+spec:
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ollama
+  namespace: llm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ollama
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    # New replicas take minutes to pull the model, so scale down slowly.
+    scaleDown:
+      stabilizationWindowSeconds: 600
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ollama
+  namespace: llm
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: ollama
+---
+# Only Kong may call the model; nothing else in the cluster can reach it directly.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ollama-from-kong-only
+  namespace: llm
+spec:
+  podSelector:
+    matchLabels:
+      app: ollama
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kong
+      ports:
+        - port: 11434

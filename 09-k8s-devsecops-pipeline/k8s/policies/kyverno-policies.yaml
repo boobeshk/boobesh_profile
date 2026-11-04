@@ -1,0 +1,78 @@
+# Cluster-wide admission policies (Kyverno), in Enforce mode.
+# On an existing cluster, roll out with validationFailureAction: Audit first and switch once reports are clean.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow the latest tag
+    policies.kyverno.io/description: Images must use a pinned tag or digest so deployments are reproducible.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-pinned-image
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      validate:
+        message: "Use a pinned image tag or digest, not ':latest'."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    policies.kyverno.io/title: Require resource limits
+    policies.kyverno.io/description: Every container needs CPU and memory limits so one pod can't starve a node.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-limits
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      validate:
+        message: "CPU and memory limits are required."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signature
+  annotations:
+    policies.kyverno.io/title: Verify image signatures
+    policies.kyverno.io/description: Only images signed by the secure-delivery workflow may run.
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: signed-by-pipeline
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["secure-app"]
+      verifyImages:
+        - imageReferences:
+            - "*.dkr.ecr.*.amazonaws.com/secure-app*"
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/boobeshk/*"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev

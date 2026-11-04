@@ -1,0 +1,80 @@
+# Grafana loads any ConfigMap labelled grafana_dashboard=1 (sidecar setting in the Helm values).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo-slo-dashboard
+  namespace: shop
+  labels:
+    grafana_dashboard: "1"
+data:
+  podinfo-slo.json: |
+    {
+      "title": "podinfo SLO",
+      "uid": "podinfo-slo",
+      "schemaVersion": 39,
+      "time": { "from": "now-6h", "to": "now" },
+      "refresh": "30s",
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Availability (30d)",
+          "gridPos": { "x": 0, "y": 0, "w": 6, "h": 5 },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3 } },
+          "targets": [
+            {
+              "expr": "1 - (sum(increase(http_request_duration_seconds_count{job=\"podinfo\",status=~\"5..\"}[30d])) / sum(increase(http_request_duration_seconds_count{job=\"podinfo\"}[30d])))"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Error budget remaining",
+          "gridPos": { "x": 6, "y": 0, "w": 6, "h": 5 },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1, "min": 0, "max": 1 } },
+          "targets": [
+            {
+              "expr": "1 - ((sum(increase(http_request_duration_seconds_count{job=\"podinfo\",status=~\"5..\"}[30d])) / sum(increase(http_request_duration_seconds_count{job=\"podinfo\"}[30d]))) / 0.001)"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Requests per second by status",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "reqps" } },
+          "targets": [
+            {
+              "expr": "sum by (status) (rate(http_request_duration_seconds_count{job=\"podinfo\"}[5m]))",
+              "legendFormat": "{{status}}"
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Error ratio vs. burn-rate thresholds",
+          "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "percentunit" } },
+          "targets": [
+            { "expr": "slo:error_ratio:rate1h", "legendFormat": "error ratio 1h" },
+            { "expr": "vector(14.4 * 0.001)", "legendFormat": "fast-burn threshold" },
+            { "expr": "vector(6 * 0.001)", "legendFormat": "slow-burn threshold" }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Latency p50 / p99",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "fieldConfig": { "defaults": { "unit": "s" } },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"podinfo\"}[5m])))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"podinfo\"}[5m])))",
+              "legendFormat": "p99"
+            }
+          ]
+        }
+      ]
+    }

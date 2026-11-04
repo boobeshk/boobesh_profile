@@ -1,0 +1,88 @@
+# Kong plugins, attached to routes through the konghq.com/plugins annotation.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: key-auth
+  namespace: api
+plugin: key-auth
+config:
+  key_names: ["apikey"]
+  hide_credentials: true
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: rate-limit-standard
+  namespace: api
+plugin: rate-limiting
+config:
+  minute: 60
+  hour: 1000
+  policy: local
+  limit_by: consumer
+---
+# Payments get a tighter limit.
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: rate-limit-strict
+  namespace: api
+plugin: rate-limiting
+config:
+  minute: 10
+  policy: local
+  limit_by: consumer
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: request-size-limit
+  namespace: api
+plugin: request-size-limiting
+config:
+  allowed_payload_size: 1
+  size_unit: megabytes
+---
+# Global plugins apply to every request through Kong.
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: correlation-id
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: correlation-id
+config:
+  header_name: X-Request-ID
+  generator: uuid#counter
+  echo_downstream: true
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: prometheus
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: prometheus
+config:
+  status_code_metrics: true
+  latency_metrics: true
+  bandwidth_metrics: true
+  per_consumer: true
+---
+# Audit trail: one JSON line per request (consumer, route, status, latency) to stdout.
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: audit-log
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "true"
+plugin: file-log
+config:
+  path: /dev/stdout
+  reopen: false

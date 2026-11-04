@@ -1,0 +1,19 @@
+# App of apps: Argo CD watches k8s/apps/ and creates every Application it finds there.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/boobeshk/boobesh_profile.git
+    targetRevision: main
+    path: 04-azure-aks-gitops/k8s/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

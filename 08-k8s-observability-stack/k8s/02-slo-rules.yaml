@@ -1,0 +1,70 @@
+# SLO: 99.9% of podinfo requests succeed (non-5xx) over 30 days, so the error budget is 0.1%.
+# Multi-window, multi-burn-rate alerts (Google SRE Workbook, chapter 5).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: podinfo-slo
+  namespace: shop
+spec:
+  groups:
+    - name: podinfo-slo.recording
+      interval: 30s
+      rules:
+        - record: slo:error_ratio:rate5m
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo",status=~"5.."}[5m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo"}[5m]))
+        - record: slo:error_ratio:rate30m
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo",status=~"5.."}[30m]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo"}[30m]))
+        - record: slo:error_ratio:rate1h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo",status=~"5.."}[1h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo"}[1h]))
+        - record: slo:error_ratio:rate6h
+          expr: |
+            sum(rate(http_request_duration_seconds_count{job="podinfo",status=~"5.."}[6h]))
+            /
+            sum(rate(http_request_duration_seconds_count{job="podinfo"}[6h]))
+
+    - name: podinfo-slo.alerts
+      rules:
+        # Burning 14.4x budget: 2% of the monthly budget gone in 1 hour. Wake someone up.
+        - alert: PodinfoErrorBudgetFastBurn
+          expr: |
+            slo:error_ratio:rate1h > (14.4 * 0.001)
+            and
+            slo:error_ratio:rate5m > (14.4 * 0.001)
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "podinfo is burning its error budget 14x too fast"
+            description: "Error ratio {{ $value | humanizePercentage }} over 1h. At this rate the 30-day budget is gone in about 2 days."
+        # Burning 6x budget: 5% of the budget gone in 6 hours. Fix during working hours.
+        - alert: PodinfoErrorBudgetSlowBurn
+          expr: |
+            slo:error_ratio:rate6h > (6 * 0.001)
+            and
+            slo:error_ratio:rate30m > (6 * 0.001)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "podinfo is burning its error budget 6x too fast"
+            description: "Error ratio {{ $value | humanizePercentage }} over 6h."
+        - alert: PodinfoHighLatencyP99
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (rate(http_request_duration_seconds_bucket{job="podinfo"}[5m]))
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "podinfo p99 latency is above 500 ms"
+            description: "p99 latency is {{ $value | humanizeDuration }}."

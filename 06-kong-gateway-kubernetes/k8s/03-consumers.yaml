@@ -1,0 +1,44 @@
+# API consumers and their keys. Demo keys only: in real use, create these Secrets from a vault.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mobile-app-key
+  namespace: api
+  labels:
+    konghq.com/credential: key-auth
+type: Opaque
+stringData:
+  key: demo-mobile-key-change-me
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: mobile-app
+  namespace: api
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: mobile-app
+credentials:
+  - mobile-app-key
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: partner-key
+  namespace: api
+  labels:
+    konghq.com/credential: key-auth
+type: Opaque
+stringData:
+  key: demo-partner-key-change-me
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: partner
+  namespace: api
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: partner
+credentials:
+  - partner-key
