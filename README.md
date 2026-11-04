@@ -2,6 +2,8 @@
 
 **Senior DevOps Engineer | Site Reliability Engineer** · AWS · Azure · Kubernetes · Kong · Boomi
 
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-boobesh--k-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/boobesh-k)
+
 Ten hands-on labs covering how I design, automate, secure and run cloud platforms. Each lab has working code
 (Terraform, Kubernetes manifests, Helm values, Python), an architecture diagram, and a design document explaining
 the trade-offs.
@@ -67,6 +69,10 @@ Every push runs [`validate.yml`](.github/workflows/validate.yml):
 - No secrets in Git: demo values are clearly marked, and real values come from Secrets, OIDC or a vault.
 - Secure defaults: non-root containers, read-only filesystems, least-privilege IAM, network policies.
 - Every lab says what it costs and how to tear it down.
+
+## Contact
+
+Connect with me on [LinkedIn](https://www.linkedin.com/in/boobesh-k).
 
 ## License
 
